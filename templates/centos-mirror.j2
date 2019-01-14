@@ -1,35 +1,49 @@
 #!/bin/bash
 # http://www.centos.org/modules/tinycontent/index.php?id=22
+set -e
 
-SOURCE='{{ centos_mirror_source }}'
-DESTINATION='{{ mirror_doc_root }}/CentOS/'
+source='{{ centos_mirror_source }}'
+destination='{{ mirror_doc_root }}/CentOS/'
+sourcets=curls -s '{{ centos_mirror_source }}/CentOS/7/os/x86_64/repodata/repomd.xml|grep -m1 timestamp'
+destts='grep -m1 timestamp {{ mirror_doc_root }}/CentOS/7/os/x86_64/repodata/repomd.xml'
+diff = $(($sourcets - $destts))
+if [diff -gt 172800]; then
+    lockfile=/tmp/$(basename "${destination}").lock
 
-LOCKFILE=/tmp/$(basename ${DESTINATION}).lock
+    if mkdir "$lockfile" 2>/dev/null; then
+        trap 'rm -rf "$lockfile"' EXIT
 
-if [[ ! -e $LOCKFILE ]]; then
-    touch $LOCKFILE
-    timeout 1d rsync -avH    \
-          --delete           \
-          --delete-after     \
-          --delay-updates    \
-          --exclude '.~tmp~' \
-          --human-readable   \
-          --progress         \
-          --stats            \
-          --safe-links       \
-          --itemize-changes  \
-          --timeout=10800    \
-          ${SOURCE} ${DESTINATION}
+        timeout 1d rsync -avH    \
+              --delay-updates    \
+              --exclude '.~tmp~' \
+              --human-readable   \
+              --progress         \
+              --stats            \
+              --safe-links       \
+              --itemize-changes  \
+              --exclude 'repodata/*' \
+              "${source}" "${destination}"
 
-    if [[ $? -eq 0 ]]; then
-        echo `date +%s` > {{ mirror_timestamp_dir }}/centos
+        timeout 1d rsync -avH    \
+              --delete           \
+              --delete-after     \
+              --delay-updates    \
+              --exclude '.~tmp~' \
+              --human-readable   \
+              --progress         \
+              --stats            \
+              --safe-links       \
+              --itemize-changes  \
+              --timeout=10800    \
+              "${source}" "${destination}"
+
+        date +%s > {{ mirror_timestamp_dir }}/centos
+
+    else
+        cat <<EOF 1>&2
+    ERROR: Another rsync is already running and has the lock file
+    $lockfile.
+    EOF
+
     fi
-
-    rm $LOCKFILE
-else
-    cat <<EOF 1>&2
-ERROR: Another rsync is already running and has the lock file
-$LOCKFILE.
-EOF
-
 fi
